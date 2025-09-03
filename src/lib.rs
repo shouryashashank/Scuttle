@@ -29,3 +29,8 @@ pub fn process_download(file_path: &Path) -> Result<()> {
     println!{"Downloaded! {}", file_path.display()};
     Ok(())
 }
+
+pub fn process_init() -> Result<()> {
+    println!{"Initialized!"};
+    Ok(())
+}
