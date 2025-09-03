@@ -15,13 +15,13 @@ Ever needed a single, unified tool to manage your files across different cloud p
 Coming soon! Follow this repository for updates.
 
 ## Usage
-# Upload a file to your configured cloud service
+### Upload a file to your configured cloud service
 scuttle upload <file_path>
 
-# Download a file from the cloud
+### Download a file from the cloud
 scuttle download <file_name>
 
-# List files in a cloud directory
+### List files in a cloud directory
 scuttle list
 
 
