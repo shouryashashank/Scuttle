@@ -24,3 +24,8 @@ pub fn process_upload(file_path: &Path) -> Result<()> {
 
     Ok(())
 }
+
+pub fn process_download(file_path: &Path) -> Result<()> {
+    println!{"Downloaded! {}", file_path.display()};
+    Ok(())
+}
