@@ -1,8 +1,10 @@
-// lib.rs is where the core logic of our application lives.
-// This is called a "library" and can be reused by other projects.
+mod google_drive_api_client;
+mod token_storage;
 use std::path::Path;
 use anyhow::{Context, Result};
 use std::fs;
+use crate::google_drive_api_client::get_drive_client;
+use crate::token_storage::{load_token, save_token};
 
 /// This is our main function for processing an upload.
 /// We'll move the actual file handling logic here later.
@@ -26,12 +28,12 @@ pub fn process_upload(file_path: &Path) -> Result<()> {
 }
 
 pub fn process_download(file_path: &Path) -> Result<()> {
-    println!{"Downloaded! {}", file_path.display()};
+    println!("Downloaded! {}", file_path.display());
     Ok(())
 }
 
-pub fn process_init() -> Result<()> {
-    
-    println!{"Initialized!"};
+pub async fn process_init() -> Result<()> {
+    get_drive_client(&Path::new("clientsecrets.json")).await?;
+    println!("Initialized!");
     Ok(())
 }

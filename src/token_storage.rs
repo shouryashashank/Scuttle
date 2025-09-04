@@ -1,4 +1,4 @@
-use google_oauth2::AccessToken;
+use yup_oauth2::AccessToken;
 use std::fs::{self, File};
 use std::io::{self,Read, Write};
 use std::path::{Path, PathBuf};

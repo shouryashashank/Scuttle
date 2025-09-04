@@ -1,3 +1,5 @@
+mod google_drive_api_client;
+mod token_storage;
 // main.rs is the entry point for our command-line application.
 // We'll use the `clap` crate to handle arguments.
 use clap::Parser;
@@ -8,6 +10,7 @@ use std::path::PathBuf;
 use scuttle::process_upload;
 use scuttle::process_download;
 use scuttle::process_init;
+use crate::google_drive_api_client::get_drive_client;
 
 #[tokio::main]
 async fn main() {
