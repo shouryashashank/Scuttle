@@ -31,6 +31,7 @@ pub fn process_download(file_path: &Path) -> Result<()> {
 }
 
 pub fn process_init() -> Result<()> {
+    
     println!{"Initialized!"};
     Ok(())
 }
