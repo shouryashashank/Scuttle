@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use scuttle::process_upload;
 use scuttle::process_download;
 use scuttle::process_init;
+use scuttle::process_setup;
 
 #[tokio::main]
 async fn main() {
@@ -30,6 +31,9 @@ async fn run_app() -> anyhow::Result<()> {
         }
         Commands::Init { } => {
             process_init().await?;
+        }
+        Commands::Setup { } => {
+            process_setup().await?;
         }
     }
 
@@ -60,4 +64,6 @@ enum Commands {
     /// Initializes the configuration for the cloud service.
     Init {
     },
+    Setup {
+    }
 }
