@@ -8,8 +8,7 @@ use yup_oauth2::{
 use anyhow::{Context, Result};
 
 
-
-pub async fn get_drive_client(remote_server_name: &String) -> Result<DriveHub<HttpsConnector<HttpConnector>>> {
+async fn create_drive_client(remote_server_name: &String) -> Result<DriveHub<HttpsConnector<HttpConnector>>> {
     let config_dir = dirs::config_dir().context("Could not find config directory")?;
     let app_config_dir = config_dir.join("scuttle");
     if !app_config_dir.exists() {
@@ -17,7 +16,7 @@ pub async fn get_drive_client(remote_server_name: &String) -> Result<DriveHub<Ht
     }
     let secret = read_application_secret("credentials.json")
         .await
-        .expect("Failed to read credentials.json. Make sure it's in the correct path.");
+        .context("Failed to read credentials.json. Make sure it's in the correct path.")?;
     let auth = InstalledFlowAuthenticator::builder(
         secret,
         InstalledFlowReturnMethod::HTTPRedirect,
@@ -25,7 +24,7 @@ pub async fn get_drive_client(remote_server_name: &String) -> Result<DriveHub<Ht
     .persist_tokens_to_disk(app_config_dir.join(format!("{}_token.json", remote_server_name)))
     .build()
     .await
-    .expect("Failed to create authenticator");
+    .context("Failed to create authenticator")?;
     let client = hyper::Client::builder().build(
         hyper_rustls::HttpsConnectorBuilder::new()
             .with_native_roots()
@@ -33,7 +32,12 @@ pub async fn get_drive_client(remote_server_name: &String) -> Result<DriveHub<Ht
             .enable_http1()
             .build(),
     );
-    let drive_client = DriveHub::new(client, auth);
+    Ok(DriveHub::new(client, auth))
+}
+
+
+pub async fn get_drive_client(remote_server_name: &String) -> Result<DriveHub<HttpsConnector<HttpConnector>>> {
+    let drive_client = create_drive_client(remote_server_name).await?;
     print!("Drive client created and authenticated.");
     print!("test clinet by fething file list...");
     let result = drive_client
@@ -66,4 +70,45 @@ pub async fn get_drive_client(remote_server_name: &String) -> Result<DriveHub<Ht
         }
     }
     Ok(drive_client)
+}
+
+pub async fn upload_file(path: &std::path::Path, remote_server_name: &String) -> bool {
+    println!("Uploading file...");
+    let drive_client = match create_drive_client(remote_server_name).await {
+        Ok(client) => client,
+        Err(e) => {
+            eprintln!("Failed to create drive client: {}", e);
+            return false;
+        }
+    };
+
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to open file: {}", e);
+            return false;
+        }
+    };
+    let metadata = google_drive3::api::File {
+        name: Some(path.file_name().unwrap().to_string_lossy().to_string()),
+        ..Default::default()
+    };
+    let mime_type = match "application/octet-stream".parse::<mime::Mime>() {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("Failed to parse mime type: {}", e);
+            return false;
+        }
+    };
+    let request = drive_client.files().create(metadata).upload(file, mime_type);
+    match request.await {
+        Ok((_response, _file)) => {
+            println!("File uploaded successfully.");
+            true
+        }
+        Err(e) => {
+            eprintln!("Failed to upload file: {}", e);
+            false
+        }
+    }
 }

@@ -2,8 +2,9 @@ mod google_drive_api_client;
 use std::path::Path;
 use anyhow::{Context, Result};
 use std::fs;
-use crate::google_drive_api_client::get_drive_client;
+use crate::google_drive_api_client::{get_drive_client, upload_file};
 use std::io::{self, Write};
+use google_drive3::DriveHub;
 
 #[derive(Debug)]
 pub enum Service {
@@ -33,11 +34,87 @@ impl Service {
         }
     }
 }
-
+pub fn get_congig_path() -> Result<std::path::PathBuf> {
+    let config_dir = dirs::config_dir().context("Could not find config directory")?;
+    let app_config_dir = config_dir.join("scuttle");
+    if !app_config_dir.exists() {
+        fs::create_dir_all(&app_config_dir).context("Failed to create config directory")?;
+    }
+    let config_file_path = app_config_dir.join("config.json");
+    Ok(config_file_path)
+}
+pub fn get_configs() -> Result<Vec<serde_json::Value>> {
+    let config_path = get_congig_path()?;
+    if !config_path.exists() {
+        return Ok(vec![]);
+    }
+    let config_data = fs::read_to_string(&config_path).context("Failed to read config file")?;
+    let configs: Vec<serde_json::Value> = serde_json::from_str(&config_data).context("Failed to parse config file")?;
+    Ok(configs)
+}
+pub fn get_config_detail(remote_name: Option<&str>) -> Result<Option<serde_json::Value>> {
+    let configs = get_configs()?;
+    
+    match remote_name {
+        Some(name) if !name.is_empty() => {
+            // Search for config with matching remote name
+            for config in &configs {
+                if let Some(config_name) = config.get("remote_name") {
+                    if config_name == name {
+                        return Ok(Some(config.clone()));
+                    }
+                }
+            }
+        }
+        _ => {
+            // Return the default config if it exists
+            for config in &configs {
+                if let Some(is_default) = config.get("default") {
+                    if is_default.as_bool().unwrap_or(false) {
+                        return Ok(Some(config.clone()));
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(None)
+}
+pub async fn get_server_client(config: &serde_json::Value) -> Result<DriveHub<hyper_rustls::HttpsConnector<hyper::client::HttpConnector>>> {
+    if let Some(service) = config.get("service").and_then(|s| s.as_str()) {
+        match service {
+            "google_drive" => {
+                if let Some(remote_name) = config.get("remote_name").and_then(|n| n.as_str()) {
+                    let drive_client = get_drive_client(&remote_name.to_string()).await?;
+                    return Ok(drive_client);
+                } else {
+                    return Err(anyhow::anyhow!("remote_name not found in config"));
+                }
+            }
+            "dropbox" => {
+                // Initialize Dropbox client here
+                unimplemented!("Dropbox client not implemented yet");
+            }
+            "onedrive" => {
+                // Initialize OneDrive client here
+                unimplemented!("OneDrive client not implemented yet");
+            }
+            "smb" => {
+                // Initialize SMB client here
+                unimplemented!("SMB client not implemented yet");
+            }
+            _ => {
+                return Err(anyhow::anyhow!("Unsupported service: {}", service));
+            }
+        }
+    } else {
+        return Err(anyhow::anyhow!("service not found in config"));
+    }
+}
 /// This is our main function for processing an upload.
 /// We'll move the actual file handling logic here later.
 /// It takes a file path and fakes the upload process.
-pub fn process_upload(file_path: &Path) -> Result<()> {
+pub async fn process_upload(file_path: &Path) -> Result<()> {
     // Check if the file exists before we "upload" it.
     if !file_path.exists() {
         return Err(anyhow::anyhow!("File not found: {}", file_path.display()));
@@ -50,6 +127,19 @@ pub fn process_upload(file_path: &Path) -> Result<()> {
     // Use a placeholder message for now.
     println!("File name: {}", file_path.file_name().unwrap().to_str().unwrap());
     println!("File size: {} bytes", file_contents.len());
+    let confug_data = get_config_detail(None)?;
+    if confug_data.is_none() {
+        return Err(anyhow::anyhow!("No configuration found. Please run setup first."));
+    }
+    let config = confug_data.unwrap();
+    let remote_server = config.get("remote_name")
+        .and_then(|n| n.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("Remote server name not found in config"))?;
+    let uploaded = upload_file(file_path, &remote_server).await;
+    if !uploaded {
+        return Err(anyhow::anyhow!("File upload failed"));
+    }
     println!("Uploaded!");
 
     Ok(())
@@ -74,13 +164,7 @@ pub async fn process_setup() -> Result<()> {
     // then ask fo the remote server name
     // create a json file with the configuration
     // save it to the config directory  
-
-    let config_dir = dirs::config_dir().context("Could not find config directory")?;
-    let app_config_dir = config_dir.join("scuttle");
-    if !app_config_dir.exists() {
-        fs::create_dir_all(&app_config_dir).context("Failed to create config directory")?;
-    }
-    let config_file_path = app_config_dir.join("config.json");
+    let config_file_path = get_congig_path()?;
 
     // If config file does not exist, create default config list
     if !config_file_path.exists() {

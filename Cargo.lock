@@ -1296,6 +1296,7 @@ dependencies = [
  "google-drive3",
  "hyper",
  "hyper-rustls 0.24.2",
+ "mime",
  "serde",
  "serde_json",
  "tokio",

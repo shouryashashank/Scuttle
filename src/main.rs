@@ -24,7 +24,7 @@ async fn run_app() -> anyhow::Result<()> {
         // Here, we handle the `upload` command.
         Commands::Upload { path } => {
             // We call the function from our `lib.rs` to handle the logic.
-            process_upload(&path)?;
+            process_upload(&path).await?;
         }
         Commands::Download { path } => {
             process_download(&path)?;
