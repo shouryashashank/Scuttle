@@ -7,7 +7,7 @@ use yup_oauth2::{
 use anyhow::Result;
 
 
-pub async fn get_drive_client() -> Result<DriveHub<HttpsConnector<HttpConnector>>> {
+pub async fn get_drive_client(remote_server_name: &String) -> Result<DriveHub<HttpsConnector<HttpConnector>>> {
     let secret = read_application_secret("credentials.json")
         .await
         .expect("Failed to read credentials.json. Make sure it's in the correct path.");
@@ -15,7 +15,7 @@ pub async fn get_drive_client() -> Result<DriveHub<HttpsConnector<HttpConnector>
         secret,
         InstalledFlowReturnMethod::HTTPRedirect,
     )
-    .persist_tokens_to_disk("token.json")
+    .persist_tokens_to_disk(format!("{}{}",remote_server_name,"token.json"))
     .build()
     .await
     .expect("Failed to create authenticator");

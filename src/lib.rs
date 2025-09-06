@@ -61,7 +61,7 @@ pub fn process_download(file_path: &Path) -> Result<()> {
 }
 
 pub async fn process_init() -> Result<()> {
-    let _drive_client = get_drive_client().await?;
+    let _drive_client = get_drive_client(&"hello".to_string()).await?;
     
     println!("Initialized!");
     Ok(())
@@ -159,11 +159,12 @@ pub async fn process_setup() -> Result<()> {
         let updated_json = serde_json::to_string_pretty(&configs).context("Failed to serialize updated config")?;
         fs::write(&config_file_path, updated_json).context("Failed to write updated config file")?;
         println!("Config file updated with user settings.");
+        let _drive_client = get_drive_client(&remote_name.to_string()).await?;
+        println!("Initialized!");
     } else {
         println!("Using existing config.");
     }
 
-    let _drive_client = get_drive_client().await?;
-    println!("Initialized!");
+
     Ok(())
 }
