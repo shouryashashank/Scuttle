@@ -25,3 +25,6 @@ target
 
 /target
 /test_folder
+
+credentials.json
+token.json

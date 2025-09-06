@@ -1,10 +1,8 @@
 mod google_drive_api_client;
-mod token_storage;
 use std::path::Path;
 use anyhow::{Context, Result};
 use std::fs;
 use crate::google_drive_api_client::get_drive_client;
-use crate::token_storage::{load_token, save_token};
 
 /// This is our main function for processing an upload.
 /// We'll move the actual file handling logic here later.
@@ -33,7 +31,8 @@ pub fn process_download(file_path: &Path) -> Result<()> {
 }
 
 pub async fn process_init() -> Result<()> {
-    get_drive_client(&Path::new("clientsecrets.json")).await?;
+    let _drive_client = get_drive_client().await?;
+    
     println!("Initialized!");
     Ok(())
 }

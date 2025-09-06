@@ -5,18 +5,11 @@ edition = "2024"
 
 
 [dependencies]
-clap = { version = "4.5.11", features = ["derive"] }
-anyhow = "1.0.86"
-tokio = { version = "1.38.1", features = ["full"] }
-google-drive3 = "5.0.0"
-yup-oauth2 = "8.1.0"
-reqwest = {version = "0.12.5", features = ["json"]}
-serde = { version = "1.0.203", features = ["derive"] }
-serde_json = "1.0.120"
-tokio-stream = "0.1.15"
-hyper = { version = "1.4.1", features = ["full"] }
-url = "2.5.2"
-env_logger = "0.11.3"
-hyper-rustls = "0.23"
-dirs = "6.0.0"
-time = { version = "0.3.43", features = ["serde"] }
+google-drive3 = "5.0.5"
+yup-oauth2 = "9.0.0"
+tokio = { version = "1", features = ["full"] }
+hyper = "0.14"
+hyper-rustls = "0.24"
+anyhow = "1.0.99"
+clap = { version = "4.5.47", features = ["derive"] }
+serde = "1.0.219"
