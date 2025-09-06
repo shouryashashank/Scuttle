@@ -112,7 +112,7 @@ pub async fn get_server_client(config: &serde_json::Value) -> Result<DriveHub<hy
     }
 }
 
-pub async fn process_upload(file_path: &Path) -> Result<()> {
+pub async fn process_upload(file_path: &Path, remote_name: Option<&str>) -> Result<()> {
     // Check if the file exists before we "upload" it.
     if !file_path.exists() {
         return Err(anyhow::anyhow!("File not found: {}", file_path.display()));
@@ -125,7 +125,7 @@ pub async fn process_upload(file_path: &Path) -> Result<()> {
     // Use a placeholder message for now.
     println!("File name: {}", file_path.file_name().unwrap().to_str().unwrap());
     println!("File size: {} bytes", file_contents.len());
-    let confug_data = get_config_detail(None)?;
+    let confug_data = get_config_detail(remote_name)?;
     if confug_data.is_none() {
         return Err(anyhow::anyhow!("No configuration found. Please run setup first."));
     }
@@ -143,8 +143,8 @@ pub async fn process_upload(file_path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub async fn process_download(remote_path: &String) -> Result<()> {
-    let confug_data = get_config_detail(None)?;
+pub async fn process_download(remote_path: &String, remote_name: Option<&str>) -> Result<()> {
+    let confug_data = get_config_detail(remote_name)?;
     if confug_data.is_none() {
         return Err(anyhow::anyhow!("No configuration found. Please run setup first."));
     }

@@ -1,6 +1,6 @@
 // main.rs is the entry point for our command-line application.
 // We'll use the `clap` crate to handle arguments.
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 // Import the `process_upload` function from our library (lib.rs).
@@ -22,12 +22,12 @@ async fn run_app() -> anyhow::Result<()> {
 
     match args.command {
         // Here, we handle the `upload` command.
-        Commands::Upload { path } => {
+        Commands::Upload { path, remote_name } => {
             // We call the function from our `lib.rs` to handle the logic.
-            process_upload(&path).await?;
+            process_upload(&path, remote_name.as_deref()).await?;
         }
-        Commands::Download { remote_path } => {
-            process_download(&remote_path).await?;
+        Commands::Download { remote_path, remote_name } => {
+            process_download(&remote_path, remote_name.as_deref()).await?;
         }
         Commands::Init { } => {
             process_init().await?;
@@ -49,17 +49,23 @@ struct Cli {
 }
 
 // Define the available subcommands.
-#[derive(Parser)]
+#[derive(Subcommand)]
 enum Commands {
     /// Uploads a file to the configured cloud service.
     Upload {
         /// The path to the file you want to upload.
         path: PathBuf,
+        /// Optional remote name to specify which remote to use.
+        #[clap(long, value_name = "remote-name")]
+        remote_name: Option<String>,
     },
     /// Downloads a file from the configured cloud service.
     Download {
         /// The path to the file you want to download.
         remote_path: String,
+        /// Optional remote name to specify which remote to use.
+        #[clap(long, value_name = "remote-name")]
+        remote_name: Option<String>,
     },
     /// Initializes the configuration for the cloud service.
     Init {
