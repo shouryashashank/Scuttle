@@ -1,13 +1,20 @@
 use google_drive3::{api::Scope,DriveHub};
 use hyper::client::HttpConnector;
 use hyper_rustls::HttpsConnector;
+use std::fs;
 use yup_oauth2::{
     read_application_secret, InstalledFlowAuthenticator, InstalledFlowReturnMethod,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
+
 
 
 pub async fn get_drive_client(remote_server_name: &String) -> Result<DriveHub<HttpsConnector<HttpConnector>>> {
+    let config_dir = dirs::config_dir().context("Could not find config directory")?;
+    let app_config_dir = config_dir.join("scuttle");
+    if !app_config_dir.exists() {
+        fs::create_dir_all(&app_config_dir).context("Failed to create config directory")?;
+    }
     let secret = read_application_secret("credentials.json")
         .await
         .expect("Failed to read credentials.json. Make sure it's in the correct path.");
@@ -15,7 +22,7 @@ pub async fn get_drive_client(remote_server_name: &String) -> Result<DriveHub<Ht
         secret,
         InstalledFlowReturnMethod::HTTPRedirect,
     )
-    .persist_tokens_to_disk(format!("{}{}",remote_server_name,"token.json"))
+    .persist_tokens_to_disk(app_config_dir.join(format!("{}_token.json", remote_server_name)))
     .build()
     .await
     .expect("Failed to create authenticator");
