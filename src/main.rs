@@ -26,8 +26,8 @@ async fn run_app() -> anyhow::Result<()> {
             // We call the function from our `lib.rs` to handle the logic.
             process_upload(&path).await?;
         }
-        Commands::Download { path } => {
-            process_download(&path)?;
+        Commands::Download { remote_path } => {
+            process_download(&remote_path).await?;
         }
         Commands::Init { } => {
             process_init().await?;
@@ -59,7 +59,7 @@ enum Commands {
     /// Downloads a file from the configured cloud service.
     Download {
         /// The path to the file you want to download.
-        path: PathBuf,
+        remote_path: String,
     },
     /// Initializes the configuration for the cloud service.
     Init {

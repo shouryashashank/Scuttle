@@ -2,7 +2,7 @@ mod google_drive_api_client;
 use std::path::Path;
 use anyhow::{Context, Result};
 use std::fs;
-use crate::google_drive_api_client::{get_drive_client, upload_file};
+use crate::google_drive_api_client::{get_drive_client, upload_file,download_file};
 use std::io::{self, Write};
 use google_drive3::DriveHub;
 
@@ -111,9 +111,7 @@ pub async fn get_server_client(config: &serde_json::Value) -> Result<DriveHub<hy
         return Err(anyhow::anyhow!("service not found in config"));
     }
 }
-/// This is our main function for processing an upload.
-/// We'll move the actual file handling logic here later.
-/// It takes a file path and fakes the upload process.
+
 pub async fn process_upload(file_path: &Path) -> Result<()> {
     // Check if the file exists before we "upload" it.
     if !file_path.exists() {
@@ -145,8 +143,21 @@ pub async fn process_upload(file_path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn process_download(file_path: &Path) -> Result<()> {
-    println!("Downloaded! {}", file_path.display());
+pub async fn process_download(remote_path: &String) -> Result<()> {
+    let confug_data = get_config_detail(None)?;
+    if confug_data.is_none() {
+        return Err(anyhow::anyhow!("No configuration found. Please run setup first."));
+    }
+    let config = confug_data.unwrap();
+    let remote_server = config.get("remote_name")
+        .and_then(|n| n.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("Remote server name not found in config"))?;
+    let downloaded = download_file(remote_path, &std::path::Path::new(".").to_path_buf(), &remote_server).await;
+    if !downloaded {
+        return Err(anyhow::anyhow!("File download failed"));
+    }
+    println!("Downloaded!");
     Ok(())
 }
 
@@ -193,7 +204,7 @@ pub async fn process_setup() -> Result<()> {
 
     // Ask user if they want to update config
     println!("Current configs: {}
-", serde_json::to_string_pretty(&configs).unwrap());
+        ", serde_json::to_string_pretty(&configs).unwrap());
     println!("Do you want to update the config? (y/n): ");
     io::stdout().flush().unwrap();
     let mut update_input = String::new();

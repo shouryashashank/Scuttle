@@ -1293,6 +1293,7 @@ dependencies = [
  "anyhow",
  "clap",
  "dirs",
+ "futures-util",
  "google-drive3",
  "hyper",
  "hyper-rustls 0.24.2",
