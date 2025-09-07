@@ -28,3 +28,5 @@ target
 
 credentials.json
 token.json
+/.scuttle
+.scuttleignore

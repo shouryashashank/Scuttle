@@ -1,10 +1,15 @@
 mod google_drive_api_client;
-use std::path::Path;
 use anyhow::{Context, Result};
 use std::fs;
 use crate::google_drive_api_client::{get_drive_client, upload_file,download_file};
 use std::io::{self, Write};
 use google_drive3::DriveHub;
+use std::fs::File;
+mod sqlite_db;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use sha2::{Sha256, Digest};
+use crate::sqlite_db::{ScuttleDb, TrackedFile};
 
 #[derive(Debug)]
 pub enum Service {
@@ -161,10 +166,32 @@ pub async fn process_download(remote_path: &String, remote_name: Option<&str>) -
     Ok(())
 }
 
-pub async fn process_init() -> Result<()> {
-    let _drive_client = get_drive_client(&"hello".to_string()).await?;
-    
-    println!("Initialized!");
+pub async fn process_init() -> anyhow::Result<()> {
+    // Create .scuttle directory
+    let scuttle_dir = PathBuf::from(".scuttle");
+    if !scuttle_dir.exists() {
+        std::fs::create_dir(&scuttle_dir)?;
+        println!("Created .scuttle directory");
+    } else {
+        println!(".scuttle directory already exists");
+    }
+
+    // Create .scuttleignore file in root directory
+    let ignore_file = PathBuf::from(".scuttleignore");
+    if !ignore_file.exists() {
+        let mut file = File::create(&ignore_file)?;
+        let ignore_content = "# Ignore .scuttle directory\n.scuttle\n# Ignore temporary files\n*.tmp\n*.temp\n*.bak\n*.swp\n# Ignore system files\n.DS_Store\nThumbs.db\n# Ignore build directories\ntarget/\nbuild/\n# Ignore logs\n*.log\n# Ignore credentials\ncredentials.json\ntoken.json\n";
+        file.write_all(ignore_content.as_bytes())?;
+        println!("Created .scuttleignore file");
+    } else {
+        println!(".scuttleignore file already exists");
+    }
+
+    // Initialize SQLite database inside .scuttle
+    let db_path = scuttle_dir.join("scuttle.db");
+    let _db = ScuttleDb::new(&db_path)?;
+    println!("Initialized SQLite database at {}", db_path.display());
+
     Ok(())
 }
 
@@ -262,4 +289,107 @@ pub async fn process_setup() -> Result<()> {
 
 
     Ok(())
+}
+
+
+pub async fn process_status() -> Result<()> {
+    // Load tracked files from database
+    let db = ScuttleDb::new(&PathBuf::from(".scuttle/scuttle.db"))?;
+    let tracked_files = db.get_tracked_files()?;
+    let mut tracked_map: HashMap<String, &TrackedFile> = HashMap::new();
+    for file in &tracked_files {
+        tracked_map.insert(file.path.clone(), file);
+    }
+
+    // Scan local files recursively excluding .scuttle and respecting .scuttleignore
+    let ignore_patterns = load_scuttleignore()?;
+    let mut local_files = Vec::new();
+    visit_dirs(Path::new("."), &ignore_patterns, &mut local_files)?;
+
+    // Map local files by relative path
+    let mut local_map: HashMap<String, PathBuf> = HashMap::new();
+    for path in &local_files {
+        if let Ok(rel_path) = path.strip_prefix(".") {
+            local_map.insert(rel_path.to_string_lossy().to_string(), path.clone());
+        }
+    }
+
+    // Compare and print status
+    println!("Status:");
+
+    // Check for new or modified files
+    for (rel_path, local_path) in &local_map {
+        if let Some(tracked) = tracked_map.get(rel_path) {
+            // Compare hash
+            let local_hash = hash_file(local_path)?;
+            if Some(local_hash) != tracked.hash {
+                println!("Modified: {}", rel_path);
+            } else {
+                println!("Unchanged: {}", rel_path);
+            }
+        } else {
+            println!("New: {}", rel_path);
+        }
+    }
+
+    // Check for deleted files
+    for rel_path in tracked_map.keys() {
+        if !local_map.contains_key(rel_path) {
+            println!("Deleted: {}", rel_path);
+        }
+    }
+
+    Ok(())
+}
+
+fn load_scuttleignore() -> Result<Vec<String>> {
+    let ignore_file = PathBuf::from(".scuttleignore");
+    if !ignore_file.exists() {
+        return Ok(vec![]);
+    }
+    let content = fs::read_to_string(ignore_file)?;
+    let patterns = content.lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|s| s.to_string())
+        .collect();
+    Ok(patterns)
+}
+
+fn visit_dirs(dir: &Path, ignore_patterns: &[String], files: &mut Vec<PathBuf>) -> Result<()> {
+    if dir.ends_with(".scuttle") {
+        return Ok(());
+    }
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+        // Check ignore patterns
+        if ignore_patterns.iter().any(|pattern| {
+            if pattern.ends_with('/') {
+                // Directory pattern
+                path.is_dir() && file_name == pattern.trim_end_matches('/')
+            } else {
+                // File pattern
+                file_name == pattern
+            }
+        }) {
+            continue;
+        }
+
+        if path.is_dir() {
+            visit_dirs(&path, ignore_patterns, files)?;
+        } else {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn hash_file(path: &Path) -> Result<String> {
+    let data = fs::read(path)?;
+    let mut hasher = Sha256::new();
+    hasher.update(&data);
+    Ok(format!("{:x}", hasher.finalize()))
 }

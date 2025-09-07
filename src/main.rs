@@ -35,6 +35,9 @@ async fn run_app() -> anyhow::Result<()> {
         Commands::Setup { } => {
             process_setup().await?;
         }
+        Commands::Status { } => {
+            scuttle::process_status().await?;
+        }
     }
 
     Ok(())
@@ -71,5 +74,7 @@ enum Commands {
     Init {
     },
     Setup {
-    }
+    },
+    Status {
+    },
 }
