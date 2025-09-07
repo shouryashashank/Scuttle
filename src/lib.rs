@@ -1,5 +1,5 @@
 mod google_drive_api_client;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result,anyhow};
 use std::fs;
 use crate::google_drive_api_client::{get_drive_client, upload_file,download_file};
 use std::io::{self, Write};
@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use sha2::{Sha256, Digest};
 use crate::sqlite_db::{ScuttleDb, TrackedFile};
+use std::time::UNIX_EPOCH;
 
 #[derive(Debug)]
 pub enum Service {
@@ -392,4 +393,69 @@ fn hash_file(path: &Path) -> Result<String> {
     let mut hasher = Sha256::new();
     hasher.update(&data);
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+
+pub async fn process_add(paths: &[PathBuf]) -> anyhow::Result<()> {
+    let db = ScuttleDb::new(Path::new(".scuttle/scuttle.db"))?;
+
+    // Load ignore patterns
+    let ignore_patterns = load_scuttleignore()?;
+
+    for path in paths {
+        if !path.exists() {
+            return Err(anyhow!("File not found: {}", path.display()));
+        }
+
+        if path.is_dir() {
+            // Recursively add files in directory
+            let mut files = Vec::new();
+            visit_dirs(path, &ignore_patterns, &mut files)?;
+            for file_path in files {
+                add_file_to_db(&db, &ignore_patterns, &file_path)?;
+            }
+        } else {
+            add_file_to_db(&db, &ignore_patterns, path)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn add_file_to_db(db: &ScuttleDb, ignore_patterns: &[String], path: &Path) -> anyhow::Result<()> {
+    // Check if ignored
+    if is_ignored(path, ignore_patterns)? {
+        return Ok(());
+    }
+
+    // Get metadata
+    let metadata = fs::metadata(path)?;
+    let modified = metadata.modified()?.duration_since(UNIX_EPOCH)?.as_secs() as i64;
+
+    // Calculate hash
+    let hash = hash_file(path)?;
+
+    // Insert or update in DB with status 'staged'
+    db.add_file(&path.to_string_lossy(), &hash, modified, "staged")?;
+    println!("Staged: {}", path.display());
+    Ok(())
+}
+
+fn is_ignored(path: &Path, ignore_patterns: &[String]) -> anyhow::Result<bool> {
+    let path_str = path.to_string_lossy();
+    for pattern in ignore_patterns {
+        if pattern.ends_with('/') {
+            // Directory pattern: check if path starts with this directory
+            if path_str.starts_with(pattern) {
+                return Ok(true);
+            }
+        } else {
+            // File pattern: check if file name matches
+            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if file_name == pattern {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }

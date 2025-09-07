@@ -9,6 +9,8 @@ use scuttle::process_upload;
 use scuttle::process_download;
 use scuttle::process_init;
 use scuttle::process_setup;
+use scuttle::process_status;
+use scuttle::process_add;
 
 #[tokio::main]
 async fn main() {
@@ -36,7 +38,10 @@ async fn run_app() -> anyhow::Result<()> {
             process_setup().await?;
         }
         Commands::Status { } => {
-            scuttle::process_status().await?;
+            process_status().await?;
+        }
+        Commands::Add { paths } => {
+            process_add(&paths).await?;
         }
     }
 
@@ -75,6 +80,12 @@ enum Commands {
     },
     Setup {
     },
+    /// Shows the status of local files compared to tracked files.
     Status {
+    },
+    /// Adds files to the staging area.
+    Add {
+        /// Paths of files to add.
+        paths: Vec<PathBuf>,
     },
 }
