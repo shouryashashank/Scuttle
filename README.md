@@ -23,6 +23,21 @@ scuttle download <file_name>
 ### List files in a cloud directory
 scuttle list
 
+### Add files to staging area
+scuttle add <file1> <file2> ...
+
+You can also add all files recursively in a directory:
+
+```bash
+scuttle add *
+```
+
+### Show status of local files compared to tracked files
+
+```bash
+scuttle status
+```
+
 ### Setup and Multiple Account Support
 Run `scuttle setup` to configure your cloud accounts. You can add multiple accounts by running the setup multiple times with different remote names. You can also choose which account to use as the default for operations.
 
@@ -33,6 +48,8 @@ Run the following commands to get started:
 cargo run -- setup
 cargo run -- upload test_folder/test.txt
 cargo run -- download test.txt
+cargo run -- add README.md
+cargo run -- status
 ```
 
 ## Debugging and Credentials Setup
