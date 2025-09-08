@@ -11,6 +11,7 @@ use scuttle::process_init;
 use scuttle::process_setup;
 use scuttle::process_status;
 use scuttle::process_add;
+use scuttle::process_commit;
 
 #[tokio::main]
 async fn main() {
@@ -42,6 +43,9 @@ async fn run_app() -> anyhow::Result<()> {
         }
         Commands::Add { paths } => {
             process_add(&paths).await?;
+        }
+        Commands::Commit { message } => {
+            process_commit(&message).await?;
         }
     }
 
@@ -87,5 +91,11 @@ enum Commands {
     Add {
         /// Paths of files to add.
         paths: Vec<PathBuf>,
+    },
+    /// Commits the current state with a message.
+    Commit {
+        /// Commit message
+        #[clap(short = 'm', long = "message")]
+        message: String,
     },
 }

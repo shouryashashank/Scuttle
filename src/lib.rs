@@ -309,6 +309,13 @@ pub async fn process_add(paths: &[PathBuf]) -> anyhow::Result<()> {
     let ignore_patterns = load_scuttleignore()?;
     let paths_to_process = paths.to_vec();
 
+    // Get currently tracked files and map by path
+    let tracked_files = db.get_tracked_files()?;
+    let mut tracked_map = std::collections::HashMap::new();
+    for file in tracked_files {
+        tracked_map.insert(file.path.clone(), file);
+    }
+
     for path in &paths_to_process {
         if !path.exists() {
             return Err(anyhow!("File not found: {}", path.display()));
@@ -323,6 +330,18 @@ pub async fn process_add(paths: &[PathBuf]) -> anyhow::Result<()> {
                 } else {
                     file_path.to_path_buf()
                 };
+
+                // Calculate hash
+                let hash = hash_file(&file_path_stripped)?;
+
+                // Check if tracked and hash matches
+                if let Some(tracked) = tracked_map.get(&file_path_stripped.to_string_lossy().to_string()) {
+                    if tracked.hash.as_deref() == Some(&hash) {
+                        // File unchanged, skip
+                        continue;
+                    }
+                }
+
                 add_file_to_db(&db, &ignore_patterns, &file_path_stripped)?;
             }
         } else {
@@ -331,10 +350,29 @@ pub async fn process_add(paths: &[PathBuf]) -> anyhow::Result<()> {
             } else {
                 path.to_path_buf()
             };
+
+            // Calculate hash
+            let hash = hash_file(&path_stripped)?;
+
+            // Check if tracked and hash matches
+            if let Some(tracked) = tracked_map.get(&path_stripped.to_string_lossy().to_string()) {
+                if tracked.hash.as_deref() == Some(&hash) {
+                    // File unchanged, skip
+                    continue;
+                }
+            }
+
             add_file_to_db(&db, &ignore_patterns, &path_stripped)?;
         }
     }
 
+    Ok(())
+}
+
+pub async fn process_commit(message: &str) -> anyhow::Result<()> {
+    let db = ScuttleDb::new(&std::path::PathBuf::from(".scuttle/scuttle.db"))?;
+    db.commit(message)?;
+    println!("Committed with message: {}", message);
     Ok(())
 }
 
