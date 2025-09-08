@@ -1,4 +1,7 @@
 mod google_drive_api_client;
+mod config;
+mod utils;
+
 use anyhow::{Context, Result,anyhow};
 use std::fs;
 use crate::google_drive_api_client::{get_drive_client, upload_file,download_file};
@@ -8,9 +11,11 @@ use std::fs::File;
 mod sqlite_db;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use sha2::{Sha256, Digest};
 use crate::sqlite_db::{ScuttleDb, TrackedFile};
-use std::time::UNIX_EPOCH;
+
+use crate::config::service::{get_config_detail, get_config_path};
+use crate::utils::hashing::hash_file;
+use crate::utils::filesystem::{load_scuttleignore, visit_dirs, add_file_to_db};
 
 #[derive(Debug)]
 pub enum Service {
@@ -39,52 +44,6 @@ impl Service {
             Service::SMB => "smb",
         }
     }
-}
-pub fn get_congig_path() -> Result<std::path::PathBuf> {
-    let config_dir = dirs::config_dir().context("Could not find config directory")?;
-    let app_config_dir = config_dir.join("scuttle");
-    if !app_config_dir.exists() {
-        fs::create_dir_all(&app_config_dir).context("Failed to create config directory")?;
-    }
-    let config_file_path = app_config_dir.join("config.json");
-    Ok(config_file_path)
-}
-pub fn get_configs() -> Result<Vec<serde_json::Value>> {
-    let config_path = get_congig_path()?;
-    if !config_path.exists() {
-        return Ok(vec![]);
-    }
-    let config_data = fs::read_to_string(&config_path).context("Failed to read config file")?;
-    let configs: Vec<serde_json::Value> = serde_json::from_str(&config_data).context("Failed to parse config file")?;
-    Ok(configs)
-}
-pub fn get_config_detail(remote_name: Option<&str>) -> Result<Option<serde_json::Value>> {
-    let configs = get_configs()?;
-    
-    match remote_name {
-        Some(name) if !name.is_empty() => {
-            // Search for config with matching remote name
-            for config in &configs {
-                if let Some(config_name) = config.get("remote_name") {
-                    if config_name == name {
-                        return Ok(Some(config.clone()));
-                    }
-                }
-            }
-        }
-        _ => {
-            // Return the default config if it exists
-            for config in &configs {
-                if let Some(is_default) = config.get("default") {
-                    if is_default.as_bool().unwrap_or(false) {
-                        return Ok(Some(config.clone()));
-                    }
-                }
-            }
-        }
-    }
-    
-    Ok(None)
 }
 pub async fn get_server_client(config: &serde_json::Value) -> Result<DriveHub<hyper_rustls::HttpsConnector<hyper::client::HttpConnector>>> {
     if let Some(service) = config.get("service").and_then(|s| s.as_str()) {
@@ -203,7 +162,7 @@ pub async fn process_setup() -> Result<()> {
     // then ask fo the remote server name
     // create a json file with the configuration
     // save it to the config directory  
-    let config_file_path = get_congig_path()?;
+    let config_file_path = get_config_path()?;
 
     // If config file does not exist, create default config list
     if !config_file_path.exists() {
@@ -343,59 +302,6 @@ pub async fn process_status() -> Result<()> {
     Ok(())
 }
 
-fn load_scuttleignore() -> Result<Vec<String>> {
-    let ignore_file = PathBuf::from(".scuttleignore");
-    if !ignore_file.exists() {
-        return Ok(vec![]);
-    }
-    let content = fs::read_to_string(ignore_file)?;
-    let patterns = content.lines()
-        .map(|line| line.trim())
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(|s| s.to_string())
-        .collect();
-    Ok(patterns)
-}
-
-fn visit_dirs(dir: &Path, ignore_patterns: &[String], files: &mut Vec<PathBuf>) -> Result<()> {
-    if dir.ends_with(".scuttle") {
-        return Ok(());
-    }
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-        // Check ignore patterns
-        if ignore_patterns.iter().any(|pattern| {
-            if pattern.ends_with('/') {
-                // Directory pattern
-                path.is_dir() && file_name == pattern.trim_end_matches('/')
-            } else {
-                // File pattern
-                file_name == pattern
-            }
-        }) {
-            continue;
-        }
-
-        if path.is_dir() {
-            visit_dirs(&path, ignore_patterns, files)?;
-        } else {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
-fn hash_file(path: &Path) -> Result<String> {
-    let data = fs::read(path)?;
-    let mut hasher = Sha256::new();
-    hasher.update(&data);
-    Ok(format!("{:x}", hasher.finalize()))
-}
-
-
 pub async fn process_add(paths: &[PathBuf]) -> anyhow::Result<()> {
     let db = ScuttleDb::new(Path::new(".scuttle/scuttle.db"))?;
 
@@ -422,40 +328,3 @@ pub async fn process_add(paths: &[PathBuf]) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn add_file_to_db(db: &ScuttleDb, ignore_patterns: &[String], path: &Path) -> anyhow::Result<()> {
-    // Check if ignored
-    if is_ignored(path, ignore_patterns)? {
-        return Ok(());
-    }
-
-    // Get metadata
-    let metadata = fs::metadata(path)?;
-    let modified = metadata.modified()?.duration_since(UNIX_EPOCH)?.as_secs() as i64;
-
-    // Calculate hash
-    let hash = hash_file(path)?;
-
-    // Insert or update in DB with status 'staged'
-    db.add_file(&path.to_string_lossy(), &hash, modified, "staged")?;
-    println!("Staged: {}", path.display());
-    Ok(())
-}
-
-fn is_ignored(path: &Path, ignore_patterns: &[String]) -> anyhow::Result<bool> {
-    let path_str = path.to_string_lossy();
-    for pattern in ignore_patterns {
-        if pattern.ends_with('/') {
-            // Directory pattern: check if path starts with this directory
-            if path_str.starts_with(pattern) {
-                return Ok(true);
-            }
-        } else {
-            // File pattern: check if file name matches
-            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if file_name == pattern {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
-}

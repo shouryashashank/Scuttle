@@ -7,6 +7,7 @@ pub struct ScuttleDb {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct TrackedFile {
     pub path: String,
     pub hash: Option<String>,
