@@ -29,7 +29,7 @@ scuttle add <file1> <file2> ...
 You can also add all files recursively in a directory:
 
 ```bash
-scuttle add *
+scuttle add .
 ```
 
 ### Show status of local files compared to tracked files
