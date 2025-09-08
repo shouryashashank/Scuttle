@@ -307,21 +307,31 @@ pub async fn process_add(paths: &[PathBuf]) -> anyhow::Result<()> {
 
     // Load ignore patterns
     let ignore_patterns = load_scuttleignore()?;
+    let paths_to_process = paths.to_vec();
 
-    for path in paths {
+    for path in &paths_to_process {
         if !path.exists() {
             return Err(anyhow!("File not found: {}", path.display()));
         }
-
         if path.is_dir() {
             // Recursively add files in directory
             let mut files = Vec::new();
             visit_dirs(path, &ignore_patterns, &mut files)?;
             for file_path in files {
-                add_file_to_db(&db, &ignore_patterns, &file_path)?;
+                let file_path_stripped = if let Ok(stripped) = file_path.strip_prefix(".") {
+                    stripped.to_path_buf()
+                } else {
+                    file_path.to_path_buf()
+                };
+                add_file_to_db(&db, &ignore_patterns, &file_path_stripped)?;
             }
         } else {
-            add_file_to_db(&db, &ignore_patterns, path)?;
+            let path_stripped = if let Ok(stripped) = path.strip_prefix(".") {
+                stripped.to_path_buf()
+            } else {
+                path.to_path_buf()
+            };
+            add_file_to_db(&db, &ignore_patterns, &path_stripped)?;
         }
     }
 
