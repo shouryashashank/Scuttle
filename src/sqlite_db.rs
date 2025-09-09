@@ -93,26 +93,6 @@ impl ScuttleDb {
         Ok(files)
     }
 
-    fn get_last_commit_files(&self) -> Result<Vec<(String, Option<String>)>> {
-        // Get the files and their hashes from the last commit
-        let mut stmt = self.conn.prepare(
-            "SELECT f.path, f.hash FROM files f
-             JOIN commit_files cf ON f.id = cf.file_id
-             JOIN commits c ON cf.commit_id = c.id
-             WHERE c.id = (SELECT MAX(id) FROM commits)"
-        )?;
-
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })?;
-
-        let mut last_files = Vec::new();
-        for row in rows {
-            last_files.push(row?);
-        }
-        Ok(last_files)
-    }
-
     pub fn commit(&self, message: &str) -> Result<()> {
         let timestamp = Utc::now().timestamp();
 
