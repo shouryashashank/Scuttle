@@ -31,8 +31,10 @@ impl ScuttleDb {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 path TEXT NOT NULL UNIQUE,
                 hash TEXT,
+                old_hash TEXT,
                 last_modified INTEGER,
-                status TEXT
+                status TEXT,
+                existing BOOLEAN DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS commits (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,10 +56,22 @@ impl ScuttleDb {
     }
 
     pub fn add_file(&self, path: &str, hash: &str, last_modified: i64, status: &str) -> Result<()> {
+        // Get current hash to set old_hash
+        let mut stmt = self.conn.prepare("SELECT hash FROM files WHERE path = ?1")?;
+        let old_hash: Option<String> = stmt.query_row(params![path], |row| row.get(0)).optional()?;
+
+        // Insert if not exists
         self.conn.execute(
-            "INSERT OR REPLACE INTO files (path, hash, last_modified, status) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT OR IGNORE INTO files (path, hash, old_hash, last_modified, status, existing) VALUES (?1, ?2, NULL, ?3, ?4, 1)",
             params![path, hash, last_modified, status],
-        ).context("Failed to add or update file")?;
+        ).context("Failed to insert file if not exists")?;
+
+        // Update existing record with old_hash set to previous hash
+        self.conn.execute(
+            "UPDATE files SET old_hash = ?1, hash = ?2, last_modified = ?3, status = ?4 WHERE path = ?5",
+            params![old_hash, hash, last_modified, status, path],
+        ).context("Failed to update file")?;
+
         Ok(())
     }
 
@@ -105,27 +119,61 @@ impl ScuttleDb {
         // Get current tracked files
         let current_files = self.get_tracked_files()?;
 
-        // Get last commit files and hashes
-        let last_files = self.get_last_commit_files().unwrap_or_default();
+        // Map current files by path to old_hash
+        let mut current_files_map = std::collections::HashMap::new();
+        for file in &current_files {
+            current_files_map.insert(file.path.clone(), file.hash.clone());
+        }
 
-        // Map last files for quick lookup
+        // Get last commit files and hashes from files table old_hash
+        let mut stmt = self.conn.prepare("SELECT path, old_hash FROM files")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })?;
+
         let mut last_files_map = std::collections::HashMap::new();
-        for (path, hash) in last_files {
-            last_files_map.insert(path, hash);
+        for row in rows {
+            let (path, old_hash) = row?;
+            last_files_map.insert(path, old_hash);
         }
 
         // Determine file changes
         // status can be "added", "modified", "deleted"
         let mut changes: Vec<(TrackedFile, &str)> = Vec::new();
 
-        // Check for added or modified files
+        // Check for added or modified files by comparing current hash with old_hash
         for file in &current_files {
+            // Skip files with status 'committed'
+            if let Some(status) = &file.status {
+                if status == "committed" {
+                    continue;
+                }
+            }
+
             match last_files_map.get(&file.path) {
-                None => changes.push((file.clone(), "added")),
                 Some(last_hash) => {
-                    if last_hash.as_ref() != file.hash.as_ref() {
-                        changes.push((file.clone(), "modified"));
+                    match last_hash {
+                        Some(old_hash) => {
+                            match &file.hash {
+                                Some(current_hash) => {
+                                    if current_hash != old_hash {
+                                        changes.push((file.clone(), "modified"));
+                                    }
+                                }
+                                None => {
+                                    // No current hash, treat as unchanged
+                                }
+                            }
+                        }
+                        None => {
+                            // No old_hash means new file
+                            changes.push((file.clone(), "added"));
+                        }
                     }
+                }
+                None => {
+                    // New file
+                    changes.push((file.clone(), "added"));
                 }
             }
         }
@@ -161,11 +209,9 @@ impl ScuttleDb {
         for (file, status) in &changes {
             // For added or modified, update files table and set status to 'committed'
             if *status != "deleted" {
-                self.add_file(
-                    &file.path,
-                    file.hash.as_deref().unwrap_or("") ,
-                    file.last_modified.unwrap_or(0),
-                    "committed"
+                self.conn.execute(
+                    "UPDATE files SET status = 'committed' WHERE path = ?1",
+                    params![file.path],
                 )?;
             } else {
                 // For deleted, remove from files table
