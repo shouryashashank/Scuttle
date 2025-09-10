@@ -51,6 +51,14 @@ pub fn visit_dirs(dir: &Path, ignore_patterns: &[String], files: &mut Vec<PathBu
 }
 
 pub fn add_file_to_db(db: &ScuttleDb, ignore_patterns: &[String], path: &Path) -> anyhow::Result<()> {
+    // If the file doesn't exist, mark it as deleted in the DB
+    if !path.exists() {
+        // Use empty hash and zero timestamp for deleted files
+        db.add_file(&path.to_string_lossy(), "", 0, "deleted")?;
+        println!("Deleted: {}", path.display());
+        return Ok(());
+    }
+
     // Check if ignored
     if is_ignored(path, ignore_patterns)? {
         return Ok(());

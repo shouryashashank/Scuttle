@@ -2,7 +2,7 @@ mod google_drive_api_client;
 mod config;
 mod utils;
 
-use anyhow::{Context, Result,anyhow};
+use anyhow::{Context, Result};
 use std::fs;
 use crate::google_drive_api_client::{get_drive_client, upload_file,download_file};
 use std::io::{self, Write};
@@ -317,9 +317,17 @@ pub async fn process_add(paths: &[PathBuf]) -> anyhow::Result<()> {
     }
 
     for path in &paths_to_process {
+        // If path does not exist, mark it deleted instead of returning an error
         if !path.exists() {
-            return Err(anyhow!("File not found: {}", path.display()));
+            let path_stripped = if let Ok(stripped) = path.strip_prefix(".") {
+                stripped.to_path_buf()
+            } else {
+                path.to_path_buf()
+            };
+            add_file_to_db(&db, &ignore_patterns, &path_stripped)?; // add_file_to_db will mark deleted when missing
+            continue;
         }
+
         if path.is_dir() {
             // Recursively add files in directory
             let mut files = Vec::new();
@@ -363,6 +371,15 @@ pub async fn process_add(paths: &[PathBuf]) -> anyhow::Result<()> {
             }
 
             add_file_to_db(&db, &ignore_patterns, &path_stripped)?;
+        }
+    }
+
+    // After processing provided paths, check all tracked files to see if any are missing locally and mark them deleted
+    for (tracked_path, _) in tracked_map.iter() {
+        let local_path = Path::new(".").join(tracked_path);
+        if !local_path.exists() {
+            let stripped = if let Ok(s) = local_path.strip_prefix(".") { s.to_path_buf() } else { local_path };
+            add_file_to_db(&db, &ignore_patterns, &stripped)?; // will mark deleted
         }
     }
 

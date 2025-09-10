@@ -130,6 +130,14 @@ impl ScuttleDb {
                 }
             }
 
+            // If the file has been marked deleted, record it as deleted
+            if let Some(status) = &file.status {
+                if status == "deleted" {
+                    changes.push((file.clone(), "deleted"));
+                    continue;
+                }
+            }
+
             match last_files_map.get(&file.path) {
                 Some(last_hash) => {
                     match last_hash {
