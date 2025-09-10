@@ -93,6 +93,24 @@ impl ScuttleDb {
         Ok(files)
     }
 
+    pub fn get_files_by_status(&self, status: &str) -> Result<Vec<TrackedFile>> {
+        let mut stmt = self.conn.prepare("SELECT path, hash, last_modified, status FROM files WHERE status = ?1")?;
+        let file_iter = stmt.query_map(params![status], |row| {
+            Ok(TrackedFile {
+                path: row.get(0)?,
+                hash: row.get(1)?,
+                last_modified: row.get(2)?,
+                status: row.get(3)?,
+            })
+        })?;
+
+        let mut files = Vec::new();
+        for file in file_iter {
+            files.push(file?);
+        }
+        Ok(files)
+    }
+
     pub fn commit(&self, message: &str) -> Result<()> {
         let timestamp = Utc::now().timestamp();
 

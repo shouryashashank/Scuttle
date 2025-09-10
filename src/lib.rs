@@ -393,3 +393,45 @@ pub async fn process_commit(message: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub async fn process_push(remote_name: Option<&str>) -> anyhow::Result<()> {
+    // Load config
+    let confug_data = get_config_detail(remote_name)?;
+    if confug_data.is_none() {
+        return Err(anyhow::anyhow!("No configuration found. Please run setup first."));
+    }
+    let config = confug_data.unwrap();
+    let remote_server = config.get("remote_name")
+        .and_then(|n| n.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("Remote server name not found in config"))?;
+
+    // Open DB and find committed files
+    let db = ScuttleDb::new(&std::path::PathBuf::from(".scuttle/scuttle.db"))?;
+    // Use files with status 'committed' for push
+    let committed_files = db.get_files_by_status("committed")?;
+    if committed_files.is_empty() {
+        println!("Nothing to push. No committed files to upload.");
+        return Ok(());
+    }
+
+    // Upload each committed file
+    for f in committed_files {
+        let rel_path = f.path;
+        let local_path = std::path::Path::new(".").join(&rel_path);
+        if !local_path.exists() {
+            eprintln!("Committed file missing locally: {}", rel_path);
+            continue;
+        }
+        let uploaded = upload_file(&local_path, &remote_server).await;
+        if !uploaded {
+            return Err(anyhow::anyhow!(format!("Failed to upload {}", rel_path)));
+        }
+        println!("Uploaded {}", rel_path);
+    }
+
+    // Commit after successful upload
+    db.commit("push")?;
+    println!("Pushed and committed.");
+    Ok(())
+}
+
