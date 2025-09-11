@@ -227,3 +227,114 @@ pub async fn download_file(file_name: &str, destination_folder: &std::path::Path
         }
     }
 }
+
+/// Find a folder by name at the root or across drives. Returns the file ID if found.
+pub async fn find_folder_by_name(folder_name: &str, remote_server_name: &String) -> Result<Option<String>> {
+    let drive_client = create_drive_client(remote_server_name).await?;
+    let q = format!("name = '{}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false", folder_name);
+    let result = drive_client.files().list()
+        .q(&q)
+        .param("fields", "files(id, name)")
+        .supports_all_drives(true)
+        .include_items_from_all_drives(true)
+        .add_scope(Scope::Readonly)
+        .doit()
+        .await;
+
+    match result {
+        Ok((_resp, list)) => {
+            if let Some(files) = list.files {
+                if let Some(file) = files.first() {
+                    Ok(file.id.clone())
+                } else {
+                    Ok(None)
+                }
+            } else {
+                Ok(None)
+            }
+        }
+        Err(e) => Err(anyhow::anyhow!("Failed to search for folder: {}", e)),
+    }
+}
+
+/// Find a file by name under a given parent folder id. Returns file id if found.
+pub async fn find_file_in_folder(file_name: &str, parent_id: &str, remote_server_name: &String) -> Result<Option<String>> {
+    let drive_client = create_drive_client(remote_server_name).await?;
+    // Query for name and parent
+    let q = format!("name = '{}' and '{}' in parents and trashed = false", file_name, parent_id);
+    let result = drive_client.files().list()
+        .q(&q)
+        .param("fields", "files(id, name)")
+        .supports_all_drives(true)
+        .include_items_from_all_drives(true)
+        .add_scope(Scope::Readonly)
+        .doit()
+        .await;
+
+    match result {
+        Ok((_resp, list)) => {
+            if let Some(files) = list.files {
+                if let Some(file) = files.first() {
+                    Ok(file.id.clone())
+                } else {
+                    Ok(None)
+                }
+            } else {
+                Ok(None)
+            }
+        }
+        Err(e) => Err(anyhow::anyhow!("Failed to search for file in folder: {}", e)),
+    }
+}
+
+use std::path::Path;
+use hyper::body::HttpBody;
+
+/// Upload a file to Drive under optional parent_id. Returns the uploaded file ID on success.
+pub async fn upload_file_with_parent(path: &Path, parent_id: Option<&str>, remote_server_name: &String) -> Result<String> {
+    let drive_client = create_drive_client(remote_server_name).await?;
+    let file = std::fs::File::open(path).context("Failed to open file for upload")?;
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string();
+
+    let mut metadata = google_drive3::api::File::default();
+    metadata.name = Some(name.clone());
+    if let Some(parent) = parent_id {
+        metadata.parents = Some(vec![parent.to_string()]);
+    }
+
+    let mime_type = "application/octet-stream".parse::<mime::Mime>().unwrap();
+    let request = drive_client.files().create(metadata).add_scope(Scope::Full).upload(file, mime_type);
+
+    match request.await {
+        Ok((_resp, file)) => Ok(file.id.unwrap_or_default()),
+        Err(e) => Err(anyhow::anyhow!("Failed to upload file: {}", e)),
+    }
+}
+
+/// Delete a file by id. Returns true if deleted.
+pub async fn delete_file_by_id(file_id: &str, remote_server_name: &String) -> Result<bool> {
+    let drive_client = create_drive_client(remote_server_name).await?;
+    let res = drive_client.files().delete(file_id).add_scope(Scope::Full).doit().await;
+    if let Err(e) = res {
+        return Err(anyhow::anyhow!("Failed to delete file: {}", e));
+    }
+    Ok(true)
+}
+
+/// Download a file by id into the specified destination path.
+pub async fn download_file_by_id(file_id: &str, destination: &Path, remote_server_name: &String) -> Result<()> {
+    use std::io::Write;
+    let drive_client = create_drive_client(remote_server_name).await?;
+    let request = drive_client.files().get(file_id).param("alt", "media").supports_all_drives(true).add_scope(Scope::Readonly);
+    match request.doit().await {
+        Ok((mut response, _)) => {
+            let mut file = std::fs::File::create(destination).context("Failed to create destination file")?;
+            while let Some(chunk) = response.body_mut().data().await {
+                let bytes = chunk.context("Error reading response chunk")?;
+                file.write_all(&bytes).context("Failed to write to destination file")?;
+            }
+            Ok(())
+        }
+        Err(e) => Err(anyhow::anyhow!("Failed to download file by id: {}", e)),
+    }
+}
