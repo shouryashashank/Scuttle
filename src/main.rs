@@ -12,7 +12,6 @@ use scuttle::process_setup;
 use scuttle::process_status;
 use scuttle::process_add;
 use scuttle::process_commit;
-use scuttle::process_push;
 
 #[tokio::main]
 async fn main() {
@@ -47,9 +46,6 @@ async fn run_app() -> anyhow::Result<()> {
         }
         Commands::Commit { message } => {
             process_commit(&message).await?;
-        }
-        Commands::Push { remote_name } => {
-            process_push(remote_name.as_deref()).await?;
         }
     }
 
@@ -101,11 +97,5 @@ enum Commands {
         /// Commit message
         #[clap(short = 'm', long = "message")]
         message: String,
-    },
-    /// Pushes staged files to the configured remote.
-    Push {
-        /// Optional remote name to specify which remote to use.
-        #[clap(long, value_name = "remote-name")]
-        remote_name: Option<String>,
     },
 }
