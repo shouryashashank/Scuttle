@@ -4,7 +4,7 @@ mod utils;
 
 use anyhow::{Context, Result};
 use std::fs;
-use crate::google_drive_api_client::{get_drive_client, upload_file,download_file};
+use crate::google_drive_api_client::{get_drive_client, upload_file, download_file, find_folder_by_name, find_file_in_folder, download_file_by_id, upload_file_with_parent, delete_file_by_id};
 use std::io::{self, Write};
 use google_drive3::DriveHub;
 use std::fs::File;
@@ -400,9 +400,57 @@ pub async fn process_push(remote_name: Option<&str>) -> anyhow::Result<()> {
         return Err(anyhow::anyhow!("No configuration found. Please run init first."));
     }
     let config = confug_data.unwrap();
-    println!("Starting push for remote: {:?}", config.get("remote_name"));
+    let remote_server = config.get("remote_name")
+        .and_then(|n| n.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| anyhow::anyhow!("Remote server name not found in config"))?;
+    println!("Starting push for remote: {}", remote_server);
 
-    // TODO: implement full push procedure (see docs/PUSH_DESIGN.md)
+    // Resolve remote root folder by name (best-effort)
+    let remote_root_folder = match find_folder_by_name(&remote_server, &remote_server).await {
+        Ok(Some(id)) => {
+            println!("Found remote root folder id: {}", id);
+            Some(id)
+        }
+        Ok(None) => {
+            println!("Remote root folder not found by name {}. Initial upload expected.", remote_server);
+            None
+        }
+        Err(e) => {
+            println!("Error searching for remote folder: {}", e);
+            None
+        }
+    };
+
+    // If we have a remote root folder, look for scuttle.db inside it
+    if let Some(root_id) = remote_root_folder {
+        match find_file_in_folder("scuttle.db", &root_id, &remote_server).await {
+            Ok(Some(file_id)) => {
+                println!("Found remote scuttle.db with id {}. Downloading...", file_id);
+                let dest = PathBuf::from(".scuttle/remote_scuttle.db.tmp");
+                std::fs::create_dir_all(PathBuf::from(".scuttle")).ok();
+                if let Err(e) = download_file_by_id(&file_id, &dest, &remote_server).await {
+                    println!("Failed to download remote scuttle.db: {}", e);
+                    return Err(anyhow::anyhow!("Failed to download remote DB"));
+                }
+                println!("Downloaded remote DB to {}", dest.display());
+
+                // TODO: open remote DB and compute diff with local DB, then apply changes using Drive helpers.
+
+            }
+            Ok(None) => {
+                println!("No remote scuttle.db found in remote root. Initial upload required.");
+                // TODO: implement initial upload: create .scuttle folder on remote and upload files
+            }
+            Err(e) => {
+                println!("Error searching for scuttle.db in remote root: {}", e);
+                return Err(anyhow::anyhow!("Failed during remote DB lookup"));
+            }
+        }
+    } else {
+        println!("Remote root not found; will perform initial upload (not implemented yet).");
+        // TODO: implement initial upload path
+    }
 
     Ok(())
 }
