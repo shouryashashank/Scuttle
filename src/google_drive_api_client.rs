@@ -303,10 +303,18 @@ pub async fn upload_file_with_parent(path: &Path, parent_id: Option<&str>, remot
     }
 
     let mime_type = "application/octet-stream".parse::<mime::Mime>().unwrap();
-    let request = drive_client.files().create(metadata).add_scope(Scope::Full).upload(file, mime_type);
+    // Build create call and set supports_all_drives when parent provided
+    let mut create_call = drive_client.files().create(metadata).add_scope(Scope::Full);
+    if parent_id.is_some() {
+        create_call = create_call.supports_all_drives(true);
+    }
 
+    let request = create_call.upload(file, mime_type);
     match request.await {
-        Ok((_resp, file)) => Ok(file.id.unwrap_or_default()),
+        Ok((_resp, file)) => {
+            println!("Uploaded '{}' to remote (id={})", name, file.id.clone().unwrap_or_default());
+            Ok(file.id.unwrap_or_default())
+        }
         Err(e) => Err(anyhow::anyhow!("Failed to upload file: {}", e)),
     }
 }
@@ -336,5 +344,30 @@ pub async fn download_file_by_id(file_id: &str, destination: &Path, remote_serve
             Ok(())
         }
         Err(e) => Err(anyhow::anyhow!("Failed to download file by id: {}", e)),
+    }
+}
+
+/// Create a folder with given name under optional parent. Returns folder id.
+pub async fn create_folder(name: &str, parent_id: Option<&str>, remote_server_name: &String) -> Result<String> {
+    let drive_client = create_drive_client(remote_server_name).await?;
+    let mut metadata = google_drive3::api::File::default();
+    metadata.name = Some(name.to_string());
+    metadata.mime_type = Some("application/vnd.google-apps.folder".to_string());
+    if let Some(p) = parent_id {
+        metadata.parents = Some(vec![p.to_string()]);
+    }
+
+    // For folders, upload an empty reader with the correct MIME type.
+    let empty_reader = std::io::Cursor::new(Vec::new());
+    let mime_type = "application/vnd.google-apps.folder".parse::<mime::Mime>().unwrap();
+    let res = drive_client
+        .files()
+        .create(metadata)
+        .add_scope(Scope::Full)
+        .upload(empty_reader, mime_type)
+        .await;
+    match res {
+        Ok((_resp, file)) => Ok(file.id.unwrap_or_default()),
+        Err(e) => Err(anyhow::anyhow!("Failed to create folder: {}", e)),
     }
 }

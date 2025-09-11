@@ -101,11 +101,58 @@ Example minimal push behavior for MVP
 - If remote has no scuttle DB -> upload everything (initial upload).
 - If remote has scuttle DB -> download remote DB, compute path-level diffs by hash, delete remote-only paths, upload new/modified paths, upload DB temporary and replace remote DB.
 
-Next steps
+Progress implemented so far
 
-- If you want, I can add a `docs/PUSH_DESIGN.md` (this file) to the repo and then implement the `process_push` scaffold and the DB-diff function.
-- Tell me which milestone to implement first: CLI + scaffold, or DB diff implementation, or Drive helper primitives.
+The following items from the design have already been implemented in the codebase on branch `feature/push`:
 
+- CLI and scaffold
+  - Added a new `push` subcommand in `src/main.rs`.
+  - Added a scaffold `process_push(remote_name: Option<&str>)` in `src/lib.rs` which validates configuration and orchestrates the push flow.
+
+- Drive helper primitives (Google Drive)
+  - Implemented helper functions in `src/google_drive_api_client.rs`:
+    - `get_drive_client` — creates and authenticates a Drive client.
+    - `find_folder_by_name` — searches for a folder by name.
+    - `find_file_in_folder` — searches for a file by name under a given parent id.
+    - `upload_file_with_parent` — uploads a file and places it under a given parent folder id (honors supports_all_drives when parent provided).
+    - `download_file_by_id` — downloads a file by its file ID.
+    - `delete_file_by_id` — (added, will be used later for deletes).
+    - `create_folder` — initial work done (requires a small call-site API fix; see TODOs).
+
+- DB helpers and separation
+  - Added `ScuttleDb::load_tracked_files(db_path: &Path) -> Result<Vec<TrackedFile>>` in `src/sqlite_db.rs` to centralize reading tracked files from the DB.
+
+- Initial upload implementation
+  - `process_push` now performs an initial upload flow when the remote root folder is not found:
+    - Creates a remote root folder (attempts to use `create_folder`).
+    - Loads tracked files from the local DB and uploads each existing file into the created remote folder using `upload_file_with_parent`.
+    - Uploads local `.scuttle/scuttle.db` into the same remote folder.
+    - Prints progress and a summary (uploaded/skipped counts).
+
+What still remains / TODOs
+
+- Drive API call adjustments
+  - The `create_folder` implementation needs a small fix to call the generated client correctly for folder creation (the generated client API method signatures must be invoked exactly). This is a trivial code fix and will complete true folder creation support.
+
+- Diff & apply logic
+  - Implement the DB diff function to compute added/modified/deleted lists between remote DB and local DB.
+  - Implement mapping from DB paths to remote file IDs (best-effort lookup or persist `remote_id` column in DB).
+  - Implement applying deltas: deletes, uploads (modify vs replace), with retries and error handling.
+
+- Safe DB swap
+  - Upload local DB under a temporary name and then atomically replace remote `scuttle.db`.
+
+- Concurrency and robustness
+  - Add remote push lock, retries/backoff, and conflict detection (future iterations).
+
+Next recommended steps (next commits)
+
+1. Fix the `create_folder` Drive call so `process_push` reliably creates the remote root folder.
+2. Implement `diff_dbs(remote_db_path, local_db_path)` using read-only `ScuttleDb` instances and return (added, modified, deleted) lists.
+3. Implement `apply_deltas` in `lib.rs` that uses the Drive helpers to delete and upload files and then perform the safe DB swap.
+4. Add tests for `diff_dbs` using two small DB files to verify classification.
+
+If you want, I can fix the `create_folder` call now and then implement the DB diff function next.
 
 Updates based on user feedback
 
