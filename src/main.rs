@@ -12,6 +12,7 @@ use scuttle::process_setup;
 use scuttle::process_status;
 use scuttle::process_add;
 use scuttle::process_commit;
+use scuttle::process_push;
 
 #[tokio::main]
 async fn main() {
@@ -37,6 +38,9 @@ async fn run_app() -> anyhow::Result<()> {
         }
         Commands::Setup { } => {
             process_setup().await?;
+        }
+        Commands::Push { remote_name } => {
+            process_push(remote_name.as_deref()).await?;
         }
         Commands::Status { } => {
             process_status().await?;
@@ -67,6 +71,12 @@ enum Commands {
     Upload {
         /// The path to the file you want to upload.
         path: PathBuf,
+        /// Optional remote name to specify which remote to use.
+        #[clap(long, value_name = "remote-name")]
+        remote_name: Option<String>,
+    },
+    /// Push local repository state to the configured remote.
+    Push {
         /// Optional remote name to specify which remote to use.
         #[clap(long, value_name = "remote-name")]
         remote_name: Option<String>,
