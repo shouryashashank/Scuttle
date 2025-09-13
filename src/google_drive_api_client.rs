@@ -357,17 +357,67 @@ pub async fn create_folder(name: &str, parent_id: Option<&str>, remote_server_na
         metadata.parents = Some(vec![p.to_string()]);
     }
 
-    // For folders, upload an empty reader with the correct MIME type.
+    // Use the upload method with an empty reader for folder creation (works with generated client).
     let empty_reader = std::io::Cursor::new(Vec::new());
-    let mime_type = "application/vnd.google-apps.folder".parse::<mime::Mime>().unwrap();
-    let res = drive_client
-        .files()
-        .create(metadata)
-        .add_scope(Scope::Full)
-        .upload(empty_reader, mime_type)
-        .await;
+    let mime_type = "application/octet-stream".parse::<mime::Mime>().unwrap();
+    let mut create_call = drive_client.files().create(metadata).add_scope(Scope::Full);
+    if parent_id.is_some() {
+        create_call = create_call.supports_all_drives(true);
+    }
+    let res = create_call.upload(empty_reader, mime_type).await;
     match res {
         Ok((_resp, file)) => Ok(file.id.unwrap_or_default()),
         Err(e) => Err(anyhow::anyhow!("Failed to create folder: {}", e)),
     }
+}
+
+/// Ensure a remote path (sequence of folders) exists under given root_id. 
+/// `relative_path` uses POSIX-style separators and should not start with `.`. 
+/// Returns the folder id corresponding to the deepest folder (or root_id if no folders needed).
+pub async fn ensure_remote_path(root_id: &str, relative_path: &str, remote_server_name: &String) -> Result<String> {
+    // Split path into components and create folders as needed under root_id
+    let drive_client = create_drive_client(remote_server_name).await?;
+    let mut parent = root_id.to_string();
+
+    // Normalize separators and skip filename
+    let path = relative_path.replace("\\", "/");
+    let components: Vec<&str> = path.split('/').collect();
+    if components.is_empty() {
+        return Ok(parent);
+    }
+
+    // Iterate over components except the last if it's a file (we assume caller passes directory path)
+    for comp in components.iter() {
+        let name = comp.trim();
+        if name.is_empty() { continue; }
+
+        // Check if folder exists with this name under current parent
+        let q = format!("name = '{}' and '{}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false", name, parent);
+        let res = drive_client.files().list()
+            .q(&q)
+            .param("fields", "files(id, name)")
+            .supports_all_drives(true)
+            .add_scope(Scope::Readonly)
+            .doit()
+            .await;
+
+        match res {
+            Ok((_resp, list)) => {
+                if let Some(files) = list.files {
+                    if let Some(file) = files.first() {
+                        parent = file.id.clone().unwrap_or(parent.clone());
+                        continue;
+                    }
+                }
+                // Not found -> create
+                let id = create_folder(name, Some(&parent), remote_server_name).await?;
+                parent = id;
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!("Failed to ensure remote path: {}", e));
+            }
+        }
+    }
+
+    Ok(parent)
 }

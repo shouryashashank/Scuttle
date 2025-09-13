@@ -407,7 +407,13 @@ pub async fn process_push(remote_name: Option<&str>) -> anyhow::Result<()> {
     println!("Starting push for remote: {}", remote_server);
 
     // Resolve remote root folder by name (best-effort)
-    let remote_root_folder = match find_folder_by_name(&remote_server, &remote_server).await {
+    // Determine remote folder name by checking the parent of the current directory
+    let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let folder_name = current_dir.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&remote_server);
+    println!("Using remote root folder name: {}", folder_name);
+    let remote_root_folder = match find_folder_by_name(folder_name, &remote_server).await {
         Ok(Some(id)) => {
             println!("Found remote root folder id: {}", id);
             Some(id)
@@ -479,7 +485,25 @@ pub async fn process_push(remote_name: Option<&str>) -> anyhow::Result<()> {
             let local_path = PathBuf::from(".").join(&tf.path);
             if local_path.exists() {
                 println!("Uploading {}...", tf.path);
-                let res = upload_file_with_parent(&local_path, Some(&created_root), &remote_server).await;
+                // Determine parent folder path on remote and ensure it exists
+                let parent_dir = Path::new(&tf.path).parent().map(|p| p.to_string_lossy().to_string());
+                let target_parent_id = if let Some(dir) = parent_dir {
+                    if dir.is_empty() || dir == "." {
+                        created_root.clone()
+                    } else {
+                        match crate::google_drive_api_client::ensure_remote_path(&created_root, &dir, &remote_server).await {
+                            Ok(id) => id,
+                            Err(e) => {
+                                println!("Failed to ensure remote dir {}: {}", dir, e);
+                                created_root.clone()
+                            }
+                        }
+                    }
+                } else {
+                    created_root.clone()
+                };
+
+                let res = upload_file_with_parent(&local_path, Some(&target_parent_id), &remote_server).await;
                 if res.is_ok() {
                     uploaded += 1;
                 } else {
@@ -495,7 +519,15 @@ pub async fn process_push(remote_name: Option<&str>) -> anyhow::Result<()> {
         let db_path = PathBuf::from(".scuttle/scuttle.db");
         if db_path.exists() {
             println!("Uploading scuttle DB...");
-            let res = upload_file_with_parent(&db_path, Some(&created_root), &remote_server).await;
+            // Ensure remote has a `.scuttle` folder and upload DB there
+            let scuttle_folder_id = match crate::google_drive_api_client::ensure_remote_path(&created_root, ".scuttle", &remote_server).await {
+                Ok(id) => id,
+                Err(e) => {
+                    println!("Failed to ensure remote .scuttle folder: {}. Falling back to root.", e);
+                    created_root.clone()
+                }
+            };
+            let res = upload_file_with_parent(&db_path, Some(&scuttle_folder_id), &remote_server).await;
             if res.is_ok() { println!("Uploaded remote scuttle.db"); } else { println!("Failed to upload scuttle.db"); }
         } else {
             println!("Local scuttle DB not found at {}", db_path.display());
