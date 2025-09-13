@@ -93,6 +93,12 @@ impl ScuttleDb {
         Ok(files)
     }
 
+    /// Convenience helper: open DB at path and return tracked files.
+    pub fn load_tracked_files(db_path: &Path) -> Result<Vec<TrackedFile>> {
+        let db = ScuttleDb::new(db_path)?;
+        db.get_tracked_files()
+    }
+
     pub fn commit(&self, message: &str) -> Result<()> {
         let timestamp = Utc::now().timestamp();
 
