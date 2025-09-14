@@ -4,7 +4,7 @@ mod utils;
 
 use anyhow::{Context, Result};
 use std::fs;
-use crate::google_drive_api_client::{get_drive_client, upload_file, download_file, find_folder_by_name, find_file_in_folder, download_file_by_id, upload_file_with_parent, create_folder};
+use crate::google_drive_api_client::{get_drive_client, upload_file, download_file, find_folder_by_name, find_file_in_folder, download_file_by_id, upload_file_with_parent, create_folder, delete_file_by_id, ensure_remote_path};
 use std::io::{self, Write};
 use google_drive3::DriveHub;
 use std::fs::File;
@@ -463,7 +463,116 @@ pub async fn process_push(remote_name: Option<&str>) -> anyhow::Result<()> {
                      Ok((added, modified, deleted)) => {
                          println!("Diff results - added: {}, modified: {}, deleted: {}", added.len(), modified.len(), deleted.len());
                          println!("Added: {:?}\nModified: {:?}\nDeleted: {:?}", added, modified, deleted);
-                         // TODO: apply deltas (delete remote-only files, upload added/modified files), then safe DB swap
+                         // Apply deltas: deletes first
+                        // Helper: find remote file id by path under root_id
+                        async fn find_remote_id_by_path(root_id: &str, rel_path: &str, remote_server: &str) -> Option<String> {
+                            // Traverse folders
+                            let mut parent = root_id.to_string();
+                            let path = rel_path.replace("\\", "/");
+                            let comps: Vec<&str> = path.split('/').collect();
+                            if comps.is_empty() { return None; }
+                            for (i, comp) in comps.iter().enumerate() {
+                                if comp.is_empty() { continue; }
+                                let name = comp.to_string();
+                                if i == comps.len()-1 {
+                                    // last -> file; search in parent
+                                    match find_file_in_folder(&name, &parent, &remote_server.to_string()).await {
+                                        Ok(Some(id)) => return Some(id),
+                                        _ => return None,
+                                    }
+                                } else {
+                                    // folder
+                                    match find_file_in_folder(&name, &parent, &remote_server.to_string()).await {
+                                        Ok(Some(id)) => parent = id,
+                                        _ => return None,
+                                    }
+                                }
+                            }
+                            None
+                        }
+
+                        // Execute deletes
+                        for path in &deleted {
+                            println!("Deleting remote: {}", path);
+                            if let Some(remote_id) = find_remote_id_by_path(&root_id, path, &remote_server).await {
+                                if let Err(e) = delete_file_by_id(&remote_id, &remote_server).await {
+                                    println!("Failed to delete {}: {}", path, e);
+                                } else {
+                                    println!("Deleted remote {}", path);
+                                }
+                            } else {
+                                println!("Remote file not found for deletion: {}", path);
+                            }
+                        }
+
+                        // Upload added and modified (treat both similarly)
+                        for path in added.iter().chain(modified.iter()) {
+                            let local_path = Path::new(".").join(path);
+                            if !local_path.exists() {
+                                println!("Local file missing for upload: {}", path);
+                                continue;
+                            }
+                            // Ensure remote parent folders exist under project root
+                            let parent_dir = Path::new(path).parent().map(|p| p.to_string_lossy().to_string());
+                            let target_parent = if let Some(dir) = parent_dir {
+                                if dir.is_empty() || dir == "." {
+                                    root_id.clone()
+                                } else {
+                                    match crate::google_drive_api_client::ensure_remote_path(&root_id, &dir, &remote_server).await {
+                                        Ok(id) => id,
+                                        Err(e) => {
+                                            println!("Failed to ensure remote dir {}: {}. Uploading to root.", dir, e);
+                                            root_id.clone()
+                                        }
+                                    }
+                                }
+                            } else { root_id.clone() };
+
+                            println!("Uploading {} to remote...", path);
+                            match upload_file_with_parent(&local_path, Some(&target_parent), &remote_server).await {
+                                Ok(id) => println!("Uploaded {} as id {}", path, id),
+                                Err(e) => println!("Failed to upload {}: {}", path, e),
+                            }
+                        }
+
+                        // Safe DB swap: find existing scuttle.db id first, upload local DB, then delete old
+                        println!("Preparing DB swap: locating existing scuttle.db (if any)...");
+                        let scuttle_folder_id = match crate::google_drive_api_client::ensure_remote_path(&root_id, ".scuttle", &remote_server).await {
+                            Ok(id) => id,
+                            Err(e) => {
+                                println!("Failed to ensure remote .scuttle folder: {}. Aborting DB swap.", e);
+                                return Err(anyhow::anyhow!("Failed to ensure remote .scuttle"));
+                            }
+                        };
+                        // capture old id before upload
+                        let old_scuttle_id = match find_file_in_folder("scuttle.db", &scuttle_folder_id, &remote_server).await {
+                            Ok(Some(id)) => Some(id),
+                            _ => None,
+                        };
+
+                        // Upload local DB (this will create a new scuttle.db in the folder)
+                        println!("Uploading local scuttle DB...");
+                        match upload_file_with_parent(&local_db_path, Some(&scuttle_folder_id), &remote_server).await {
+                            Ok(new_id) => {
+                                println!("Uploaded new scuttle DB as id {}", new_id);
+                                // delete old if present and different from new
+                                if let Some(old_id) = old_scuttle_id {
+                                    if old_id != new_id {
+                                        if let Err(e) = delete_file_by_id(&old_id, &remote_server).await {
+                                            println!("Failed to delete old remote scuttle.db: {}", e);
+                                        } else {
+                                            println!("Deleted old remote scuttle.db (id={})", old_id);
+                                        }
+                                    } else {
+                                        println!("Old and new scuttle.db IDs are same; no delete needed");
+                                    }
+                                }
+                                println!("DB swap completed.");
+                            }
+                            Err(e) => println!("Failed to upload new scuttle DB: {}", e),
+                        }
+
+                        println!("Push apply complete.");
                      }
                      Err(e) => {
                          println!("Failed to compute DB diff: {}", e);
