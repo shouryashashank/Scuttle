@@ -99,6 +99,54 @@ impl ScuttleDb {
         db.get_tracked_files()
     }
 
+    /// Compute diff between two DB files. Returns (added, modified, deleted)
+    pub fn diff_dbs(remote_db_path: &Path, local_db_path: &Path) -> Result<(Vec<String>, Vec<String>, Vec<String>)> {
+        let remote_db = ScuttleDb::new(remote_db_path)?;
+        let local_db = ScuttleDb::new(local_db_path)?;
+
+        let remote_files = remote_db.get_tracked_files()?;
+        let local_files = local_db.get_tracked_files()?;
+
+        let mut remote_map = std::collections::HashMap::new();
+        for f in remote_files {
+            remote_map.insert(f.path.clone(), f.hash.clone());
+        }
+
+        let mut local_map = std::collections::HashMap::new();
+        for f in local_files {
+            local_map.insert(f.path.clone(), f.hash.clone());
+        }
+
+        let mut added = Vec::new();
+        let mut modified = Vec::new();
+        let mut deleted = Vec::new();
+
+        // Added or modified
+        for (path, local_hash_opt) in &local_map {
+            match remote_map.get(path) {
+                None => added.push(path.clone()),
+                Some(remote_hash_opt) => {
+                    if local_hash_opt.is_some() && remote_hash_opt.is_some() {
+                        if local_hash_opt != remote_hash_opt {
+                            modified.push(path.clone());
+                        }
+                    } else if local_hash_opt.is_some() && remote_hash_opt.is_none() {
+                        modified.push(path.clone());
+                    }
+                }
+            }
+        }
+
+        // Deleted
+        for (path, _) in &remote_map {
+            if !local_map.contains_key(path) {
+                deleted.push(path.clone());
+            }
+        }
+
+        Ok((added, modified, deleted))
+    }
+
     pub fn commit(&self, message: &str) -> Result<()> {
         let timestamp = Utc::now().timestamp();
 

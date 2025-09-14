@@ -419,7 +419,7 @@ pub async fn process_push(remote_name: Option<&str>) -> anyhow::Result<()> {
             Some(id)
         }
         Ok(None) => {
-            println!("Remote root folder not found by name {}. Initial upload expected.", remote_server);
+            println!("Remote root folder not found by name {}. Initial upload expected.", folder_name);
             None
         }
         Err(e) => {
@@ -430,34 +430,62 @@ pub async fn process_push(remote_name: Option<&str>) -> anyhow::Result<()> {
 
     // If we have a remote root folder, look for scuttle.db inside it
     if let Some(root_id) = remote_root_folder {
-        match find_file_in_folder("scuttle.db", &root_id, &remote_server).await {
-            Ok(Some(file_id)) => {
-                println!("Found remote scuttle.db with id {}. Downloading...", file_id);
-                let dest = PathBuf::from(".scuttle/remote_scuttle.db.tmp");
-                std::fs::create_dir_all(PathBuf::from(".scuttle")).ok();
-                if let Err(e) = download_file_by_id(&file_id, &dest, &remote_server).await {
-                    println!("Failed to download remote scuttle.db: {}", e);
-                    return Err(anyhow::anyhow!("Failed to download remote DB"));
-                }
-                println!("Downloaded remote DB to {}", dest.display());
-
-                // TODO: open remote DB and compute diff with local DB, then apply changes using Drive helpers.
-
-            }
-            Ok(None) => {
-                println!("No remote scuttle.db found in remote root. Initial upload required.");
-                // TODO: implement initial upload: create .scuttle folder on remote and upload files
-            }
+        // Prefer `.scuttle/scuttle.db` inside the project root folder on remote
+        let scuttle_folder_id = match find_file_in_folder(".scuttle", &root_id, &remote_server).await {
+            Ok(Some(id)) => Some(id),
+            Ok(None) => None,
             Err(e) => {
-                println!("Error searching for scuttle.db in remote root: {}", e);
-                return Err(anyhow::anyhow!("Failed during remote DB lookup"));
+                println!("Error searching for remote .scuttle folder: {}", e);
+                None
             }
-        }
-    } else {
+        };
+
+        let search_parent = scuttle_folder_id.as_deref().unwrap_or(&root_id);
+        match find_file_in_folder("scuttle.db", search_parent, &remote_server).await {
+             Ok(Some(file_id)) => {
+                 println!("Found remote scuttle.db with id {}. Downloading...", file_id);
+                 let dest = PathBuf::from(".scuttle/remote_scuttle.db.tmp");
+                 std::fs::create_dir_all(PathBuf::from(".scuttle")).ok();
+                 if let Err(e) = download_file_by_id(&file_id, &dest, &remote_server).await {
+                     println!("Failed to download remote scuttle.db: {}", e);
+                     return Err(anyhow::anyhow!("Failed to download remote DB"));
+                 }
+                 println!("Downloaded remote DB to {}", dest.display());
+
+                 // Compute diff between remote DB and local DB
+                 let local_db_path = PathBuf::from(".scuttle/scuttle.db");
+                 if !local_db_path.exists() {
+                     println!("Local scuttle DB not found at {}", local_db_path.display());
+                     return Err(anyhow::anyhow!("Local DB missing"));
+                 }
+
+                 match ScuttleDb::diff_dbs(&dest, &local_db_path) {
+                     Ok((added, modified, deleted)) => {
+                         println!("Diff results - added: {}, modified: {}, deleted: {}", added.len(), modified.len(), deleted.len());
+                         println!("Added: {:?}\nModified: {:?}\nDeleted: {:?}", added, modified, deleted);
+                         // TODO: apply deltas (delete remote-only files, upload added/modified files), then safe DB swap
+                     }
+                     Err(e) => {
+                         println!("Failed to compute DB diff: {}", e);
+                         return Err(anyhow::anyhow!("DB diff failed"));
+                     }
+                 }
+
+              }
+             Ok(None) => {
+                println!("No remote scuttle.db found in remote root or .scuttle folder. Initial upload required.");
+                // TODO: implement initial upload: create .scuttle folder on remote and upload files
+             }
+             Err(e) => {
+                 println!("Error searching for scuttle.db in remote root: {}", e);
+                 return Err(anyhow::anyhow!("Failed during remote DB lookup"));
+             }
+         }
+     } else {
         println!("Remote root not found; creating remote root folder and performing initial upload.");
 
         // Create remote root folder with the remote_server name
-        let created_root = match create_folder(&remote_server, None, &remote_server).await {
+        let created_root = match create_folder(&folder_name, None, &remote_server).await {
             Ok(id) => {
                 println!("Created remote root folder '{}' with id {}", remote_server, id);
                 id
